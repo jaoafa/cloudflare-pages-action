@@ -34,7 +34,7 @@ try {
       $ export CLOUDFLARE_ACCOUNT_ID="${accountId}"
     }
   
-    $$ npx wrangler@2 pages publish "${directory}" --project-name="${projectName}" --branch="${branch}"
+    $$ npx wrangler@2 pages publish "${directory}" --project-name="${projectName}" --branch="${branch}" --log-level="debug"
     `;
 
 		const response = await fetch(
