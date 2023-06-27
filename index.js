@@ -25700,22 +25700,12 @@ try {
   const gitHubToken = (0, import_core.getInput)("gitHubToken", { required: false });
   const branch = (0, import_core.getInput)("branch", { required: false });
   const workingDirectory = (0, import_core.getInput)("workingDirectory", { required: false });
-  const wranglerVersion = (0, import_core.getInput)("wranglerVersion", { required: false });
   const getProject = async () => {
     const response = await (0, import_undici.fetch)(
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}`,
       { headers: { Authorization: `Bearer ${apiToken}` } }
     );
-    if (response.status !== 200) {
-      console.error(`Cloudflare API returned non-200: ${response.status}`);
-      const json = await response.text();
-      console.error(`API returned: ${json}`);
-      throw new Error("Failed to get Pages project, API returned non-200");
-    }
     const { result } = await response.json();
-    if (result === null) {
-      throw new Error("Failed to get Pages project, project does not exist. Check the project name or create it!");
-    }
     return result;
   };
   const createPagesDeployment = async () => {
@@ -25725,7 +25715,7 @@ try {
       $ export CLOUDFLARE_ACCOUNT_ID="${accountId}"
     }
   
-    $$ npx wrangler@${wranglerVersion} pages publish "${directory}" --project-name="${projectName}" --branch="${branch}"
+    $$ npx wrangler@2 pages publish "${directory}" --project-name="${projectName}" --branch="${branch}" --log-level="debug"
     `;
     const response = await (0, import_undici.fetch)(
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}/deployments`,
@@ -25736,12 +25726,11 @@ try {
     } = await response.json();
     return deployment;
   };
-  const githubBranch = import_process.env.GITHUB_HEAD_REF || import_process.env.GITHUB_REF_NAME;
   const createGitHubDeployment = async (octokit, productionEnvironment, environment) => {
     const deployment = await octokit.rest.repos.createDeployment({
       owner: import_github.context.repo.owner,
       repo: import_github.context.repo.repo,
-      ref: githubBranch || import_github.context.ref,
+      ref: import_github.context.ref,
       auto_merge: false,
       description: "Cloudflare Pages",
       required_contexts: [],
@@ -25796,7 +25785,10 @@ try {
   };
   (async () => {
     const project = await getProject();
-    const productionEnvironment = githubBranch === project.production_branch || branch === project.production_branch;
+    if (!project)
+      throw new Error("Unable to find pages project");
+    const githubBranch = import_process.env.GITHUB_REF_NAME;
+    const productionEnvironment = githubBranch === project.production_branch;
     const environmentName = `${projectName} (${productionEnvironment ? "Production" : "Preview"})`;
     let gitHubDeployment;
     if (gitHubToken && gitHubToken.length) {
