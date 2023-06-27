@@ -24743,12 +24743,12 @@ var __publicField2 = (obj, key, value) => {
   return value;
 };
 var Shell = class {
-  constructor(env_passthrough = ["PATH"]) {
+  constructor(overrides) {
     __publicField(this, "process");
-    const env2 = { PS1: "" };
-    env_passthrough.forEach((key) => {
-      env2[key] = process.env[key];
-    });
+    const env2 = {
+      ...{ PS1: "", PATH: process.env.PATH },
+      ...overrides
+    };
     this.process = import_child_process.default.spawn("bash", ["--noprofile", "--norc"], {
       env: env2,
       detached: true
@@ -24779,6 +24779,15 @@ var trimFinalNewline = (input) => {
     input = input.slice(0, input.length - 1);
   }
   return input;
+};
+var parseJSON = (input) => {
+  if (!input)
+    throw new Error(`Attempting to parse JSON, got empty stdout.`);
+  try {
+    return JSON.parse(input);
+  } catch (e) {
+    throw new Error(`Failed to parse stdout as JSON, got: ${input}`);
+  }
 };
 var Command = class {
   constructor({
@@ -24937,7 +24946,7 @@ async function IfStatement(chunk, context2) {
   }
 }
 async function Command2(chunk, context2) {
-  const { interps, cwd, shell, exit_expected } = context2;
+  const { interps, cwd, shell, exit_expected, env: env2 } = context2;
   const [str] = chunk;
   const split_cmd = str.split(/#__(?:FUNCTION|VALUE)_(\d+)__#/g);
   let cmd = "";
@@ -25005,9 +25014,10 @@ async function Await(chunk, context2) {
 async function Stdout(chunk, context2) {
   const { interps, last_cmd, captures } = context2;
   const [out_or_err, second] = chunk;
-  if (!(out_or_err === "stdout" || out_or_err === "stderr"))
-    throw new Error(`Expected only 'stdout' or 'stderr', got: ${out_or_err}`);
-  const capture = trimFinalNewline((last_cmd == null ? void 0 : last_cmd[out_or_err]) || "");
+  const is_json = out_or_err === "json";
+  if (!(out_or_err === "stdout" || out_or_err === "stderr" || is_json))
+    throw new Error(`Expected only 'stdout', 'stderr' or 'json', got: ${out_or_err}`);
+  const capture = is_json ? parseJSON(last_cmd == null ? void 0 : last_cmd.stdout) : trimFinalNewline((last_cmd == null ? void 0 : last_cmd[out_or_err]) || "");
   const tag2 = second.tag;
   if (tag2 === "identifier") {
     const [val_type, val_id] = second;
@@ -25397,7 +25407,7 @@ var await_statement = function _await_statement(state) {
   }
   return tag(node, "await_statement");
 };
-var _stdout_statement_expression = _pattern(/std(out|err)/);
+var _stdout_statement_expression = _pattern(/std(out|err)|json/);
 var _stdout_statement_expression2 = _pattern(/\s+>>\s+/);
 var stdout_statement = function _stdout_statement(state) {
   var last_index = state.index;
@@ -25643,8 +25653,8 @@ var grammar = function _grammar(state) {
 };
 var grammar_default = parse(grammar);
 var parser = (str) => grammar_default(str.trim());
-var lazyCreateShell = async () => new Shell();
-var _shellac = (cwd, lazyShell) => async (s, ...interps) => {
+var lazyCreateShell = async (env2) => new Shell(env2);
+var _shellac = (cwd, lazyShell, env2) => async (s, ...interps) => {
   let str = s[0];
   for (let i = 0; i < interps.length; i++) {
     const is_fn = typeof interps[i] === "function";
@@ -25657,14 +25667,15 @@ var _shellac = (cwd, lazyShell) => async (s, ...interps) => {
   if (!parsed || typeof parsed === "string")
     throw new Error("Parsing error!");
   const captures = {};
-  const shell = await lazyShell();
+  const shell = await lazyShell(env2);
   const last_cmd = await execute(parsed, {
     interps,
     last_cmd: null,
     cwd,
     captures,
     shell,
-    exit_expected: false
+    exit_expected: false,
+    env: env2
   });
   shell.exit();
   return {
@@ -25673,19 +25684,29 @@ var _shellac = (cwd, lazyShell) => async (s, ...interps) => {
     ...captures
   };
 };
-var bgShellac = async (s, ...interps) => {
-  const shell = await lazyCreateShell();
+var bgShellac = (cwd, lazyShell, env2) => async (s, ...interps) => {
+  const shell = await lazyShell(env2);
   return {
     process: shell.process,
     pid: shell.process.pid,
-    promise: _shellac(process.cwd(), async () => shell)(s, ...interps),
+    promise: _shellac(process.cwd(), async () => shell, env2)(s, ...interps),
     kill: () => shell.exit()
   };
 };
-var shellac = Object.assign(_shellac(process.cwd(), lazyCreateShell), {
-  in: (cwd) => _shellac(cwd, lazyCreateShell),
-  bg: bgShellac
-});
+function makeShellac(cwd = process.cwd(), env2 = {}, shell = lazyCreateShell) {
+  return Object.defineProperties(_shellac(cwd, lazyCreateShell, env2), {
+    in: { value: (dir) => makeShellac(dir, env2, shell) },
+    bg: {
+      get() {
+        return bgShellac(cwd, shell, env2);
+      }
+    },
+    env: {
+      value: (newEnv) => makeShellac(cwd, { ...env2, ...newEnv }, shell)
+    }
+  });
+}
+var shellac = makeShellac();
 var src_default = shellac;
 
 // src/index.ts
@@ -25709,13 +25730,13 @@ try {
     return result;
   };
   const createPagesDeployment = async () => {
-    await src_default.in(import_node_path.default.join(process.cwd(), workingDirectory))`
+    await src_default.in(import_node_path.default.join(process.cwd(), workingDirectory)).env({ WRANGLER_LOG: "debug" })`
     $ export CLOUDFLARE_API_TOKEN="${apiToken}"
     if ${accountId} {
       $ export CLOUDFLARE_ACCOUNT_ID="${accountId}"
     }
   
-    $$ npx wrangler@2 pages publish "${directory}" --project-name="${projectName}" --branch="${branch}" --log-level="debug"
+    $$ npx wrangler@2 pages publish "${directory}" --project-name="${projectName}" --branch="${branch}"
     `;
     const response = await (0, import_undici.fetch)(
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${projectName}/deployments`,

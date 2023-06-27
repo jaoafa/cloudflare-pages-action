@@ -28,13 +28,13 @@ try {
 
 	const createPagesDeployment = async () => {
 		// TODO: Replace this with an API call to wrangler so we can get back a full deployment response object
-		await shellac.in(path.join(process.cwd(), workingDirectory)).env({ WRANGLER_LOG: 'debug' })`
+		await shellac.in(path.join(process.cwd(), workingDirectory)).env({ WRANGLER_LOG: "debug" })`
     $ export CLOUDFLARE_API_TOKEN="${apiToken}"
     if ${accountId} {
       $ export CLOUDFLARE_ACCOUNT_ID="${accountId}"
     }
   
-    $$ npx wrangler@2 pages publish "${directory}" --project-name="${projectName}" --branch="${branch}" --log-level="debug"
+    $$ npx wrangler@2 pages publish "${directory}" --project-name="${projectName}" --branch="${branch}"
     `;
 
 		const response = await fetch(
@@ -91,7 +91,7 @@ try {
 			log_url: `https://dash.cloudflare.com/${accountId}/pages/view/${projectName}/${deploymentId}`,
 			description: "Cloudflare Pages",
 			state: "success",
-			auto_inactive: false
+			auto_inactive: false,
 		});
 	};
 
